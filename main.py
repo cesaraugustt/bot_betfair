@@ -143,8 +143,8 @@ def monitora_odd(driver):
             over, under = busca_odds(driver)
 
             if over is None or under is None:
-                print('Não possível obter as odds. Continuando monitoramento...')
-                time.sleep(30)
+                print('Não foi possível obter as odds. Continuando monitoramento...')
+                time.sleep(60)
                 continue
 
             print(f'Over: {over} | Under: {under} | Tempo: {minutos} min.')
