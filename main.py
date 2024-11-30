@@ -7,41 +7,47 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from dotenv import load_dotenv
 import time
 import os
-import re
 
 
 URL = 'https://www.betfair.com/'
-ODD_ALVO = 5
-TEMPO_MAX = 45
+ODD_ALVO = 1.8
+TEMPO_MAX = 35
 VALOR_BET = 0.58
+
+
+def carrega_credenciais():
+    load_dotenv()
+    email = os.getenv('EMAIL')
+    senha = os.getenv('SENHA')
+
+    if not email or not senha:
+        print('Credenciais de login ausentes no arquivo .env.')
+
+    return email, senha
 
 
 def aceita_cookies(driver):
     try:
         time.sleep(2)
+        # botão aceita apenas cookies necessários
         WebDriverWait(driver, 10).until(EC.element_to_be_clickable(
             (By.ID, 'onetrust-reject-all-handler'))).click()
         print('Cookies aceitos.')
 
-    except Exception as e:
-        print('Erro ao aceitar cookies ou botão não encontrado:', e)
+    except TimeoutException:
+        print('Botão de cookies não encontrado.')
 
 
-def login(driver):
+def login(driver, email, senha):
     try:
-        email = os.getenv('EMAIL')
-        senha = os.getenv('SENHA')
-        if not email or not senha:
-            print('Credenciais de login não configuradas.')
-
         driver.find_element(By.ID, 'ssc-liu').send_keys(email)
         driver.find_element(By.ID, 'ssc-lipw').send_keys(senha)
         WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.ID, 'ssc-lis'))).click()
         print('Login realizado.')
 
-    except Exception as e:
-        print('Erro durante o login:', e)
+    except TimeoutException:
+        print('Erro ao realizar login.')
 
 
 def verifica_tempo(driver):
@@ -51,7 +57,7 @@ def verifica_tempo(driver):
         minutos = int(tempo_elemento.text.replace("'", ""))
 
         if minutos > TEMPO_MAX:
-            print('Tempo máximo atingido')
+            print('Tempo máximo atingido.')
             return True, minutos
 
         else:
@@ -59,33 +65,34 @@ def verifica_tempo(driver):
 
     except NoSuchElementException:
         print('Elemento de tempo não encontrado.')
-        return False
+        return False, None
 
     except ValueError as e:
         print(f'Erro ao converter tempo: {e}')
-        return False
+        return False, None
 
 
-def verifica_mercado(driver):
+def verifica_placar(driver):
     try:
         placar_casa = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, "//div[@class='_3zclL']//div[1]")))
-        placar_casa_text = placar_casa.text
-
+            EC.presence_of_element_located((By.XPATH, "//div[@class='_3zclL']//div[1]"))).text.strip()
         placar_fora = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, "//div[@class='_2v7CY PuNpm']//div[2]")))
-        placar_fora_text = placar_fora.text
+            EC.presence_of_element_located((By.XPATH, "//div[@class='_2v7CY PuNpm']//div[2]"))).text.strip()
+        print(f'Placar: {placar_casa} x {placar_fora}')
 
-        print(f'Placar: {placar_casa_text} x {placar_fora_text}')
-
-        if placar_casa_text != '0' or placar_fora_text != '0':
-            print('Mercado fechado.')
-            return True
+        if placar_casa != '0' or placar_fora != '0':
+            print('Gol detectado. Pausando para validação...')
+            time.sleep(120)
+            if placar_casa != '0' or placar_fora != '0':
+                return True
+            else:
+                return False
 
         else:
             return False
 
     except TimeoutException:
+        print('Erro ao capturar informações do placar: Elemento não encontrado.')
         return False
 
     except Exception as e:
@@ -93,55 +100,62 @@ def verifica_mercado(driver):
         return False
 
 
+def busca_odds(driver):
+    time.sleep(2)
+    try:
+        over_05_ht = WebDriverWait(driver, 10).until(
+            EC.visibility_of_element_located(
+                (By.XPATH, "//div[@role='tabpanel']//div[2]//div[1]//div[1]//div[2]//div[1]//div[2]//div[1]//div[1]//div[1]//div[2]//div[2]//div[1]//button[1]")
+            )
+        ).text
+        under_05_ht = WebDriverWait(driver, 10).until(
+            EC.visibility_of_element_located(
+                (By.XPATH, "//div[@role='tabpanel']//div[2]//div[1]//div[1]//div[2]//div[1]//div[2]//div[1]//div[1]//div[1]//div[2]//div[3]//div[1]//button[1]")
+            )
+        ).text
+        
+        if over_05_ht == '-' or under_05_ht == '-':
+            print('Mercado suspenso, odds não disponíveis.')
+            return None, None
+        # Verificar se os valores obtidos são números válidos
+        try:
+            odd_over = float(over_05_ht)
+            odd_under = float(under_05_ht)
+            return odd_over, odd_under
+        except ValueError:
+            print(f'Erro ao converter os valores das odds. Over:{odd_over}, Under: {odd_under}')
+            return None, None
+    except TimeoutException:
+        print("Erro ao buscar as odds: Elemento não encontrado.")
+        return None, None
+
+
 def monitora_odd(driver):
     print('Iniciando monitoramento...')
-
     while True:
         try:
             tempo_valido, minutos = verifica_tempo(driver)
 
-            if verifica_mercado(driver) or tempo_valido:
+            if verifica_placar(driver) or tempo_valido:
                 print('Encerrando monitoramento.')
-                return False
+                return False, None
 
-            over_05_ht = WebDriverWait(driver, 10).until(
-                EC.visibility_of_element_located(
-                    (By.XPATH, "//div[@role='tabpanel']//div[2]//div[1]//div[1]//div[2]//div[1]//div[2]//div[1]//div[1]//div[1]//div[2]//div[2]//div[1]//button[1]")
-                )
-            )
+            over, under = busca_odds(driver)
 
-            odd_over_05_ht = over_05_ht.text
-
-            under_05_ht = WebDriverWait(driver, 10).until(
-                EC.visibility_of_element_located(
-                    (By.XPATH, "//div[@role='tabpanel']//div[2]//div[1]//div[1]//div[2]//div[1]//div[2]//div[1]//div[1]//div[1]//div[2]//div[3]//div[1]//button[1]")
-                )
-            )
-
-            odd_under_05_ht = under_05_ht.text
-
-            # Verificar se os valores obtidos são números válidos
-            try:
-                odd_over_05_ht = float(odd_over_05_ht)
-                odd_under_05_ht = float(odd_under_05_ht)
-            except ValueError:
-                print(f'Erro ao converter os valores das odds. Over:'
-                      f'{odd_over_05_ht}, Under: {odd_under_05_ht}')
-                time.sleep(15)
+            if over is None or under is None:
+                print('Não foi possível obter as odds. Continuando monitoramento...')
+                time.sleep(60)
                 continue
 
-            print(f'Over: {odd_over_05_ht} | Under: '
-                  f'{odd_under_05_ht} | Tempo: {minutos} min.')
+            print(f'Over: {over} | Under: {under} | Tempo: {minutos} min.')
 
-            if odd_over_05_ht >= ODD_ALVO:
-                print(f'Odd desejada alcançada: '
-                      f'{odd_over_05_ht} | Tempo de jogo: {minutos} min')
+            if over >= ODD_ALVO:
+                print(f'Odd Over 0.5 HT alcançada: {over} | Tempo de jogo: {minutos} min')
                 xpath = "//div[@role='tabpanel']//div[2]//div[1]//div[1]//div[2]//div[1]//div[2]//div[1]//div[1]//div[1]//div[2]//div[2]//div[1]//button[1]"
                 return True, xpath
 
-            if odd_under_05_ht >= ODD_ALVO:
-                print(f'Odd desejada alcançada:'
-                      f'{odd_under_05_ht} | Tempo de jogo: {minutos} min')
+            if under <= ODD_ALVO:
+                print(f'Odd Under 0.5 HT alcançada: {under} | Tempo de jogo: {minutos} min')
                 xpath = "//div[@role='tabpanel']//div[2]//div[1]//div[1]//div[2]//div[1]//div[2]//div[1]//div[1]//div[1]//div[2]//div[3]//div[1]//button[1]"
                 return True, xpath
 
@@ -161,10 +175,12 @@ def verifica_saldo(driver):
     try:
         saldo = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located(
-                (By.CLASS_NAME, "//tr[@rel='main-wallet']//td[@class='ssc-wla']"))
-        )
+                (By.XPATH, "//tr[@rel='main-wallet']//td[@class='ssc-wla']"))
+        ).text.strip()
+        
+        valor_saldo = float(saldo.replace('R$', ''))
 
-        if saldo >= VALOR_BET:
+        if valor_saldo >= VALOR_BET:
             print("Saldo suficiente para realizar a aposta.")
             return True
         else:
@@ -181,19 +197,23 @@ def faz_bet(driver, xpath):
         if not verifica_saldo(driver):
             return
 
+        # Botão da odd
         WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, xpath))
         ).click()
 
+        # Botão termos da Betfair
         WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable(
                 (By.XPATH, "//button[normalize-space()='Aceitar']"))
         ).click()
 
+        # Campo onde preenche o valor da bet
         bet_input = driver.find_element(By.CLASS_NAME, '_2Sn4h')
         bet_input.clear()
         bet_input.send_keys(str(VALOR_BET))
 
+        # Botão de fazer a bet
         bet_button = driver.find_element(By.CLASS_NAME, '_3DCMk')
         bet_button.click()
         print(f'Aposta de {VALOR_BET} realizada com sucesso!')
@@ -210,17 +230,14 @@ def main():
     options.add_argument('--start-maximized')  # Maximiza a janela
 
     driver = webdriver.Chrome(options=options)
-    load_dotenv()
 
     try:
         driver.get(URL)
         aceita_cookies(driver)
-        login(driver)
-
-        time.sleep(1)
-
-        print('Selecione manualmente o jogo.')
-        input('Pressione Enter após selecionar o mercado para iniciar o monitoramento...')
+        email, senha = carrega_credenciais()
+        login(driver, email, senha)
+        time.sleep(3)
+        input('Selecione o jogo manualmente e pressione Enter...')
 
         # botão aba gols
         WebDriverWait(driver, 10).until(
