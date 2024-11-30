@@ -1,0 +1,6 @@
+{
+    "python.defaultInterpreterPath": "./venv/bin/python",
+    "[windows]": {
+        "python.defaultInterpreterPath": "./venv/Scripts/python.exe"
+    }
+}
